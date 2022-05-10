@@ -32,6 +32,7 @@ def prod_rules_to_list(rules):
     Args:
         rules: 문자열로 이루어진 생성 규칙
          - 각 규칙을 한 줄에 하나 씩 표기하며, 축약(|) 표현을 사용할 수 있다.
+         - 축약 표현은 여러 줄에 걸처서 사용할 수 있다.
          - 논터미널 기호는 알파벳 대문자로 시작하며, 터미널은 대문자로 시작하지 않는다.
          - 각 기호 사이에는 띄어쓰기를 사용한다. 붙여 쓸 경우 하나의 기호로 인식한다.
          - 엡실론 기호는 ε을 사용한다.
@@ -44,9 +45,14 @@ def prod_rules_to_list(rules):
         ''')
         [['S', 'C'], ['S', 'D'], ['C', 'a', 'C'], ['C', 'b'], ['D', 'c', 'D'], ['D', 'd']]
     """
+    merged = []
+    for rule in filter(len, map(lambda x: x.strip(), rules.split('\n'))): # 빈 줄 및 앞뒤 공백 제거
+        if '->' in rule:
+            merged.append(rule)
+        else:
+            merged[len(merged)-1] += rule # 여러 줄에 걸친 축약 표현은 한 줄로 합친다.
     result = []
-    for rule in rules.split('\n'):
-        if rule.strip() == '': continue # 빈 줄 생략
+    for rule in merged:
         lhs, rhs = rule.split('->')     # 생성 규칙의 왼쪽/오른쪽 분리
         for r in rhs.split('|'):        # 축약된 생성 규칙 분리
             result.append([lhs.strip()] + list(filter(lambda x: x, r.split(' '))))
@@ -62,7 +68,7 @@ def compute_first(rules, verbose=False):
         verbose: True일 경우 Pass Table을 출력한다.
 
     Note:
-        FIRST란? 논터미널 기호로부터 유도되어 첫 번째로 나타날 수 있는 터미널 기호의 집합이다.
+        FIRST란? 논터미널 기호로부터 유도되어 첫 번째로 나타날 수 있는 터미널 기호의 집합
 
     Example:
         {'S': {'a', 'c', 'd', 'b'}, 'C': {'a', 'b'}, 'D': {'d', 'c'}}
@@ -73,7 +79,8 @@ def compute_first(rules, verbose=False):
     
     # 각 논터미널의 FIRST를 빈 set으로 초기화
     for rule in rules:
-        FIRSTs[rule[0]] = set()
+        for r in filter(is_non_terminal, rule): # LHS 및 RHS에 있는 모든 논터미널을 빈 set으로 초기화한다.
+            FIRSTs[r] = set()
         if verbose:
             PASSs.append([f'{rule[0]} -> {" ".join(rule[1:])}'])
 
@@ -133,7 +140,7 @@ def compute_follow(rules, verbose=False):
         verbose: True일 경우 Pass Table을 출력한다.
 
     Note:
-        FOLLOW란? 논터미널 기호 다음에 나오는 터미널 기호들의 집합이다.
+        FOLLOW란? 논터미널 기호 바로 다음에 나오는 터미널 기호들의 집합
         시작 기호에는 end marker($)를 추가한다.
 
     Example:
@@ -144,14 +151,15 @@ def compute_follow(rules, verbose=False):
     PASSs   = []  # verbose가 True인 경우 Pass Table을 출력하기 위한 리스트
     
     FIRSTs = compute_first(rules)
-    def get_first(x): # 입실론을 제외한 FIRST를 반환한다. (x가 터미널일 경우 x 그대로 반환)
+    def first_without_epsilon(x): # 입실론을 제외한 FIRST를 반환한다. (x가 터미널일 경우 x 그대로 반환)
         if is_epsilon(x):  return {}
         if is_terminal(x): return {x}
         return FIRSTs[x] - {'ε'}
 
     # 각 논터미널의 FOLLOW를 빈 set으로 초기화
     for rule in rules:
-        FOLLOWs[rule[0]] = set()
+        for r in filter(is_non_terminal, rule): # LHS 및 RHS에 있는 모든 논터미널을 빈 set으로 초기화한다.
+            FOLLOWs[r] = set()
         if verbose:
             PASSs.append([f'{rule[0]} -> {" ".join(rule[1:])}'])
     
@@ -168,13 +176,14 @@ def compute_follow(rules, verbose=False):
                 FOLLOWs[lhs].add('$')
                 desc.append(f'FOLLOW({lhs}) = {{$}} (start)')
 
+            # INIT_FOLLOW 계산 (한번만 해도되는지??)
             # INIT_FOLLOW(A) = {a ∈ V_T | B -> αACβ, a ∈ FIRST(C), α, β ∈ V*}
             for i in range(1, len(rule)-1):
                 curr = rule[i]
                 next = rule[i+1]
                 if is_non_terminal(curr):
                     cnt = len(FOLLOWs[curr])              # 기존 개수 카운팅
-                    FOLLOWs[curr].update(get_first(next)) # 입실론을 제외한 FIRST를 추가한다.
+                    FOLLOWs[curr].update(first_without_epsilon(next)) # 입실론을 제외한 FIRST를 추가한다.
                     cnt = len(FOLLOWs[curr]) - cnt        # 추가된 개수 카운팅
                     updated_count += cnt
 
@@ -200,7 +209,7 @@ def compute_follow(rules, verbose=False):
                     cnt = len(FOLLOWs[priv]) - cnt     # 추가된 개수 카운팅
                     updated_count += cnt
 
-                    if verbose and cnt:
+                    if verbose and len(FOLLOWs[lhs]): # and cnt:
                         desc.append(f'FOLLOW({priv}) = {{{", ".join(sorted(FOLLOWs[priv]))}}} (fce)') # FIRST contains epsilon
             
             if verbose:
@@ -242,6 +251,11 @@ def print_first_and_follow(rules):
 
 if __name__ == '__main__':
 
+    # 논터미널 기호는 대문자로 시작한다.
+    # 논터미널 및 터미널 기호는 여러 글자를 사용할 수 있다. (ex: If, Then, num)
+    # 각 기호 사이에는 띄어쓰기를 사용한다.
+    # 엡실론 기호는 ε을 사용한다.
+
     print_first_and_follow('''
         S -> C   | D
         C -> a C | b
@@ -255,3 +269,30 @@ if __name__ == '__main__':
         T' -> * F T' | ε
         F  -> ( E ) | id
     ''')
+
+    # print_first_and_follow('''
+    #     Stmt -> If Expr Then Stmt | If Expr Then Stmt Else Stmt | other
+    #     Expr -> true | false
+    # ''')
+
+    # Tiny-C language (Id와 Int는 일부 생략함)
+    # print_first_and_follow('''
+    #     Prog -> Stmt
+    #     Stmt -> if ParenExpr Stmt
+    #           | if ParenExpr Stmt else Stmt
+    #           | while ParenExpr Stmt
+    #           | do Stmt while ParenExpr ;
+    #           | { Stmt }
+    #           | Expr ;
+    #           | ;
+    #     ParenExpr -> ( Expr )
+    #     Expr -> Test | Id = Expr
+    #     Test -> Sum  | Sum < Sum
+    #     Sum  -> Term | Sum + Term | Sum - Term
+    #     Term -> Id   | Int | ParenExpr
+    #     Id   -> a | b | c | d
+    #     Int  -> 0 | 1 | 2 | 3
+    # ''')
+
+    # 출력이 길 경우 리다이렉션을 사용하세요.
+    # python ./first_follow.py > out.txt
